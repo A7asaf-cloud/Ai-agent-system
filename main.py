@@ -1,16 +1,18 @@
 from flask import Flask, request, Response
 from twilio.twiml.messaging_response import MessagingResponse
-import anthropic
+from groq import Groq
 import os
+import json
 import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+MODEL = "llama3-70b-8192"
 
-LOGISTICS_AGENT_PROMPT = """אתה סוכן AI מומחה בלוגיסטיקה ותפעול.
+LOGISTICS_PROMPT = """אתה סוכן AI מומחה בלוגיסטיקה ותפעול.
 תפקידך לעזור בנושאים הבאים:
 - מעקב משלוחים והזמנות
 - ניהול מלאי
@@ -18,55 +20,47 @@ LOGISTICS_AGENT_PROMPT = """אתה סוכן AI מומחה בלוגיסטיקה �
 - פתרון בעיות תפעוליות
 תמיד תענה בעברית, בצורה ברורה ותכליתית."""
 
-ORCHESTRATOR_PROMPT = """אתה המוח המרכזי של מערכת AI.
-נתח הודעות והחזר JSON בלבד:
+ORCHESTRATOR_PROMPT = """אתה מנתב הודעות. החזר JSON בלבד:
 {"agent": "logistics" או "general", "reason": "סיבה"}"""
 
 conversation_history = {}
 
 def route_to_agent(message):
     try:
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=100,
-            messages=[{"role": "user", "content": f"הודעה: {message}"}],
-            system=ORCHESTRATOR_PROMPT
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": ORCHESTRATOR_PROMPT},
+                {"role": "user", "content": f"הודעה: {message}"}
+            ],
+            max_tokens=100
         )
-        import json
-        result = json.loads(response.content[0].text)
+        result = json.loads(response.choices[0].message.content)
         return result.get("agent", "general")
     except:
         return "general"
 
-def logistics_agent(message, history):
-    messages = history + [{"role": "user", "content": message}]
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=500,
-        system=LOGISTICS_AGENT_PROMPT,
-        messages=messages
+def run_agent(message, history, system_prompt):
+    messages = [{"role": "system", "content": system_prompt}]
+    messages += history[-10:]
+    messages.append({"role": "user", "content": message})
+    response = client.chat.completions.create(
+        model=MODEL,
+        messages=messages,
+        max_tokens=500
     )
-    return response.content[0].text
-
-def general_agent(message, history):
-    messages = history + [{"role": "user", "content": message}]
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=500,
-        system="אתה עוזר AI לעסק. תמיד ענה בעברית.",
-        messages=messages
-    )
-    return response.content[0].text
+    return response.choices[0].message.content
 
 def process_message(sender, message):
     if sender not in conversation_history:
         conversation_history[sender] = []
-    history = conversation_history[sender][-10:]
+    history = conversation_history[sender]
     agent = route_to_agent(message)
+    logger.info(f"ניתוב ל: {agent} | שולח: {sender}")
     if agent == "logistics":
-        reply = logistics_agent(message, history)
+        reply = run_agent(message, history, LOGISTICS_PROMPT)
     else:
-        reply = general_agent(message, history)
+        reply = run_agent(message, history, "אתה עוזר AI לעסק. תמיד ענה בעברית.")
     conversation_history[sender].append({"role": "user", "content": message})
     conversation_history[sender].append({"role": "assistant", "content": reply})
     return reply

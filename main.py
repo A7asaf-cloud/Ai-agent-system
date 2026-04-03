@@ -10,7 +10,8 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-MODEL = "llama3-70b-8192"
+MODEL = "llama-3.3-70b-versatile"
+
 
 LOGISTICS_PROMPT = """אתה סוכן AI מומחה בלוגיסטיקה ותפעול.
 תפקידך לעזור בנושאים הבאים:
